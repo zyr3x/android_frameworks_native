@@ -46,9 +46,8 @@ ifeq ($(BOARD_EGL_NEEDS_LEGACY_FB),true)
     endif
 endif
 
-ifeq ($(BOARD_USE_MHEAP_SCREENSHOT),true)
-    LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
-endif
+LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
+
 
 LOCAL_MODULE:= libgui
 

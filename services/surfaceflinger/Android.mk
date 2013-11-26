@@ -66,9 +66,9 @@ ifeq ($(TARGET_RUNNING_WITHOUT_SYNC_FRAMEWORK),true)
     LOCAL_CFLAGS += -DRUNNING_WITHOUT_SYNC_FRAMEWORK
 endif
 
-ifeq ($(BOARD_USE_MHEAP_SCREENSHOT),true)
-    LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
-endif
+
+LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
+
 
 # See build/target/board/generic/BoardConfig.mk for a description of this setting.
 ifneq ($(VSYNC_EVENT_PHASE_OFFSET_NS),)
