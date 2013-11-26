@@ -46,6 +46,8 @@ ifeq ($(BOARD_EGL_NEEDS_LEGACY_FB),true)
     endif
 endif
 
+LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
+
 LOCAL_MODULE:= libgui
 
 ifeq ($(TARGET_BOARD_PLATFORM), tegra)
