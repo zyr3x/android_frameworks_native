@@ -48,14 +48,12 @@ ifeq ($(TARGET_DISABLE_TRIPLE_BUFFERING),true)
 	LOCAL_CFLAGS += -DTARGET_DISABLE_TRIPLE_BUFFERING
 endif
 
-ifeq ($(BOARD_EGL_NEEDS_LEGACY_FB),true)
-	LOCAL_CFLAGS += -DBOARD_EGL_NEEDS_LEGACY_FB
-        ifeq ($(TARGET_BOARD_PLATFORM),exynos4)
-	    LOCAL_CFLAGS += -DEGL_NEEDS_FNW
-        endif
-        ifeq ($(TARGET_QCOM_DISPLAY_VARIANT), legacy)
-	    LOCAL_CFLAGS += -DEGL_NEEDS_FNW
-        endif
+ifeq ($(BOARD_EGL_NEEDS_FNW),true)
+    LOCAL_CFLAGS += -DEGL_NEEDS_FNW
+endif
+
+ifeq ($(TARGET_FORCE_HWC_FOR_VIRTUAL_DISPLAYS),true)
+    LOCAL_CFLAGS += -DFORCE_HWC_COPY_FOR_VIRTUAL_DISPLAYS
 endif
 
 ifneq ($(NUM_FRAMEBUFFER_SURFACE_BUFFERS),)
@@ -66,9 +64,9 @@ ifeq ($(TARGET_RUNNING_WITHOUT_SYNC_FRAMEWORK),true)
     LOCAL_CFLAGS += -DRUNNING_WITHOUT_SYNC_FRAMEWORK
 endif
 
-
-LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
-
+ifeq ($(BOARD_USE_MHEAP_SCREENSHOT),true)
+    LOCAL_CFLAGS += -DUSE_MHEAP_SCREENSHOT
+endif
 
 # See build/target/board/generic/BoardConfig.mk for a description of this setting.
 ifneq ($(VSYNC_EVENT_PHASE_OFFSET_NS),)
@@ -110,6 +108,15 @@ ifeq ($(BOARD_USES_SAMSUNG_HDMI),true)
         LOCAL_SHARED_LIBRARIES += libTVOut libhdmiclient
         LOCAL_C_INCLUDES += hardware/samsung/$(TARGET_BOARD_PLATFORM)/libhdmi/libhdmiservice
         LOCAL_C_INCLUDES += hardware/samsung/$(TARGET_BOARD_PLATFORM)/include
+endif
+
+ifeq ($(TARGET_USES_QCOM_BSP), true)
+ifneq ($(TARGET_QCOM_DISPLAY_VARIANT),)
+    LOCAL_C_INCLUDES += hardware/qcom/display-$(TARGET_QCOM_DISPLAY_VARIANT)/libgralloc
+else
+    LOCAL_C_INCLUDES += hardware/qcom/display/$(TARGET_BOARD_PLATFORM)/libgralloc
+endif
+    LOCAL_CFLAGS += -DQCOM_BSP
 endif
 
 LOCAL_MODULE:= libsurfaceflinger

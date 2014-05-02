@@ -41,6 +41,7 @@
 
 #include <gui/ISurfaceComposer.h>
 #include <gui/ISurfaceComposerClient.h>
+#include <gui/BufferQueue.h>
 
 #include <hardware/hwcomposer_defs.h>
 
@@ -100,7 +101,8 @@ public:
     void run() ANDROID_API;
 
     enum {
-        EVENT_VSYNC = HWC_EVENT_VSYNC
+        EVENT_VSYNC = HWC_EVENT_VSYNC,
+        EVENT_ORIENTATION = HWC_EVENT_ORIENTATION
     };
 
     // post an asynchronous message to the main thread
@@ -256,6 +258,18 @@ private:
     void handleTransaction(uint32_t transactionFlags);
     void handleTransactionLocked(uint32_t transactionFlags);
 
+    // Read virtual display properties
+    void setVirtualDisplayData( int32_t hwcDisplayId,
+                                const sp<IGraphicBufferProducer>& sink);
+
+    // Configure Virtual Display parameters such as the display surface
+    // and the buffer queue
+    void configureVirtualDisplay(int32_t &hwcDisplayId,
+            sp<DisplaySurface> &dispSurface,
+            sp<IGraphicBufferProducer> &producer,
+            const DisplayDeviceState state,
+            sp<BufferQueue> bq);
+
     /* handlePageFilp: this is were we latch a new buffer
      * if available and compute the dirty region.
      */
@@ -342,6 +356,9 @@ private:
     size_t getMaxTextureSize() const;
     size_t getMaxViewportDims() const;
 
+    uint32_t getMinColorDepth() const { return mMinColorDepth; }
+    inline bool getUseDithering() const { return mUseDithering; }
+
     /* ------------------------------------------------------------------------
      * Display and layer stack management
      */
@@ -378,7 +395,7 @@ private:
      * Compositing
      */
     void invalidateHwcGeometry();
-    static void computeVisibleRegions(
+    static void computeVisibleRegions(size_t dpy,
             const LayerVector& currentLayers, uint32_t layerStack,
             Region& dirtyRegion, Region& opaqueRegion);
 
@@ -448,6 +465,7 @@ private:
     sp<EventThread> mEventThread;
     sp<EventThread> mSFEventThread;
     sp<EventControlThread> mEventControlThread;
+    uint32_t mMinColorDepth;
     EGLContext mEGLContext;
     EGLConfig mEGLConfig;
     EGLDisplay mEGLDisplay;
@@ -475,6 +493,7 @@ private:
     volatile nsecs_t mDebugInTransaction;
     nsecs_t mLastTransactionTime;
     bool mBootFinished;
+    bool mUseDithering;
 
     // these are thread safe
     mutable MessageQueue mEventQueue;

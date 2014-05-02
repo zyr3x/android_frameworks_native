@@ -66,7 +66,8 @@ static bool hwcHasApiVersion(const hwc_composer_device_1_t* hwc,
 }
 
 static bool hwcHasVsyncEvent(const hwc_composer_device_1_t* hwc) {
-    return hwcHasApiVersion(hwc, HWC_DEVICE_API_VERSION_0_3);
+    return hwcHasApiVersion(hwc, HWC_DEVICE_API_VERSION_0_3) ||
+           hwcHeaderVersion(hwc) >= 3;
 }
 
 static size_t sizeofHwcLayerList(const hwc_composer_device_1_t* hwc,
@@ -187,7 +188,8 @@ HWComposer::HWComposer(
       mFbDev(0), mHwc(0), mNumDisplays(1),
       mCBContext(new cb_context),
       mEventHandler(handler),
-      mDebugForceFakeVSync(false)
+      mDebugForceFakeVSync(false),
+      mVDSEnabled(false)
 {
     for (size_t i =0 ; i<MAX_HWC_DISPLAYS ; i++) {
         mLists[i] = 0;
@@ -303,6 +305,15 @@ HWComposer::HWComposer(
         for (size_t i =0 ; i<NUM_BUILTIN_DISPLAYS ; i++) {
             queryDisplayProperties(i);
         }
+    }
+
+    // read system property for VDS solution
+    // This property is expected to be setup once during bootup
+    if( (property_get("persist.hwc.enable_vds", value, NULL) > 0) &&
+        ((!strncmp(value, "1", strlen("1"))) ||
+        !strncasecmp(value, "true", strlen("true")))) {
+        //HAL virtual display is using VDS based implementation
+        mVDSEnabled = true;
     }
 
     if (needVSyncThread) {
@@ -592,42 +603,51 @@ void HWComposer::eventControl(int disp, int event, int enabled) {
               event, disp, enabled);
         return;
     }
-    if (event != EVENT_VSYNC) {
-        ALOGW("eventControl got unexpected event %d (disp=%d en=%d)",
-              event, disp, enabled);
-        return;
-    }
     status_t err = NO_ERROR;
-    if (mHwc && !mDebugForceFakeVSync && hwcHasVsyncEvent(mHwc))  {
-        if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_0)) {
-            // NOTE: we use our own internal lock here because we have to call
-            // into the HWC with the lock held, and we want to make sure
-            // that even if HWC blocks (which it shouldn't), it won't
-            // affect other threads.
-            Mutex::Autolock _l(mEventControlLock);
-            const int32_t eventBit = 1UL << event;
-            const int32_t newValue = enabled ? eventBit : 0;
-            const int32_t oldValue = mDisplayData[disp].events & eventBit;
-            if (newValue != oldValue) {
-                ATRACE_CALL();
-                err = hwcEventControl(mHwc, disp, event, enabled);
-                if (!err) {
-                    int32_t& events(mDisplayData[disp].events);
-                    events = (events & ~eventBit) | newValue;
+    switch(event) {
+        case EVENT_VSYNC:
+            if (mHwc && !mDebugForceFakeVSync && hwcHasVsyncEvent(mHwc)) {
+                if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_0)) {
+                    // NOTE: we use our own internal lock here because we have to
+                    // call into the HWC with the lock held, and we want to make
+                    // sure that even if HWC blocks (which it shouldn't), it won't
+                    // affect other threads.
+                    Mutex::Autolock _l(mEventControlLock);
+                    const int32_t eventBit = 1UL << event;
+                    const int32_t newValue = enabled ? eventBit : 0;
+                    const int32_t oldValue = mDisplayData[disp].events & eventBit;
+                    if (newValue != oldValue) {
+                        ATRACE_CALL();
+                        err = mHwc->eventControl(mHwc, disp, event, enabled);
+                        if (!err) {
+                            int32_t& events(mDisplayData[disp].events);
+                            events = (events & ~eventBit) | newValue;
+                        }
+                    }
+                } else {
+                    err = hwcEventControl(mHwc, disp, event, enabled);
                 }
+                // error here should not happen -- not sure what we should
+                // do if it does.
+                ALOGE_IF(err, "eventControl(%d, %d) failed %s",
+                         event, enabled, strerror(-err));
             }
-        } else {
-            err = hwcEventControl(mHwc, disp, event, enabled);
-        }
-        // error here should not happen -- not sure what we should
-        // do if it does.
-        ALOGE_IF(err, "eventControl(%d, %d) failed %s",
-                event, enabled, strerror(-err));
-    }
 
-    if (err == NO_ERROR && mVSyncThread != NULL) {
-        mVSyncThread->setEnabled(enabled);
+            if (err == NO_ERROR && mVSyncThread != NULL) {
+                mVSyncThread->setEnabled(enabled);
+            }
+            break;
+        case EVENT_ORIENTATION:
+            // Orientation event
+            if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_0))
+                err = hwcEventControl(mHwc, disp, event, enabled);
+            break;
+        default:
+            ALOGW("eventControl got unexpected event %d (disp=%d en=%d)",
+                    event, disp, enabled);
+            break;
     }
+    return;
 }
 
 status_t HWComposer::createWorkList(int32_t id, size_t numLayers) {
@@ -726,7 +746,7 @@ status_t HWComposer::prepare() {
         mLists[i] = disp.list;
         if (mLists[i]) {
             if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_3)) {
-                mLists[i]->outbuf = NULL;
+                mLists[i]->outbuf = disp.outbufHandle;
                 mLists[i]->outbufAcquireFenceFd = -1;
             } else if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
                 // garbage data to catch improper use
@@ -751,22 +771,33 @@ status_t HWComposer::prepare() {
                 disp.hasFbComp = false;
                 disp.hasOvComp = false;
                 if (disp.list) {
-                    for (size_t i=0 ; i<hwcNumHwLayers(mHwc, disp.list) ; i++) {
-                        hwc_layer_1_t& l = disp.list->hwLayers[i];
+                    for (size_t j=0 ; j<disp.list->numHwLayers ; j++) {
+                        hwc_layer_1_t& l = disp.list->hwLayers[j];
 
                         //ALOGD("prepare: %d, type=%d, handle=%p",
                         //        i, l.compositionType, l.handle);
 
-                        if (l.flags & HWC_SKIP_LAYER) {
+                        if ((i == DisplayDevice::DISPLAY_PRIMARY) &&
+                                    l.flags & HWC_SKIP_LAYER) {
                             l.compositionType = HWC_FRAMEBUFFER;
                         }
                         if (l.compositionType == HWC_FRAMEBUFFER) {
+                            disp.hasFbComp = true;
+                        }
+                        // If the composition type is BLIT, we set this to
+                        // trigger a FLIP
+                        if(l.compositionType == HWC_BLIT) {
                             disp.hasFbComp = true;
                         }
                         if (l.compositionType == HWC_OVERLAY) {
                             disp.hasOvComp = true;
                         }
                     }
+                    if (disp.list->numHwLayers == (disp.framebufferTarget ? 1 : 0)) {
+                        disp.hasFbComp = true;
+                    }
+                } else {
+                    disp.hasFbComp = true;
                 }
             }
         } else {
@@ -779,7 +810,7 @@ status_t HWComposer::prepare() {
                     hwc_layer_t& l = list0->hwLayers[i];
 
                     //ALOGD("prepare: %d, type=%d, handle=%p",
-                    //        i, l.compositionType, l.handle);
+                    //        j, l.compositionType, l.handle);
 
                     if (l.flags & HWC_SKIP_LAYER) {
                         l.compositionType = HWC_FRAMEBUFFER;
@@ -787,19 +818,17 @@ status_t HWComposer::prepare() {
                     if (l.compositionType == HWC_FRAMEBUFFER) {
                         disp.hasFbComp = true;
                     }
+                    // If the composition type is BLIT, we set this to
+                    // trigger a FLIP
+                    if(l.compositionType == HWC_BLIT) {
+                        disp.hasFbComp = true;
+                    }
                     if (l.compositionType == HWC_OVERLAY) {
                         disp.hasOvComp = true;
                     }
                 }
-                if (disp.list->numHwLayers == (disp.framebufferTarget ? 1 : 0)) {
-                    disp.hasFbComp = true;
-                }
-            } else {
-                disp.hasFbComp = true;
             }
-
         }
-
     }
     return (status_t)err;
 }
@@ -1021,8 +1050,38 @@ public:
         // not supported on VERSION_03
         return Fence::NO_FENCE;
     }
+    bool isStatusBar(hwc_layer_t* layer) {
+        /* Getting the display details into the iterator is more trouble than
+         * it's worth, so do a rough approximation */
+
+        // Aligned to the top-left corner and less than 60px tall
+        if (layer->displayFrame.top == 0 &&
+            layer->displayFrame.left == 0 && layer->displayFrame.bottom < 60) {
+            return true;
+        }
+        // Landscape:
+        // Aligned to the top, right-cropped at less than 60px
+        if (layer->displayFrame.top == 0 &&
+            layer->sourceCrop.right < 60) {
+            return true;
+        }
+        // Upside-down:
+        // Left-aligned, bottom-cropped at less than 60, and the projected frame matches the crop height
+        if (layer->displayFrame.left == 0 && layer->sourceCrop.bottom < 60 &&
+            layer->displayFrame.bottom - layer->displayFrame.top == layer->sourceCrop.bottom) {
+            return true;
+        }
+        return false;
+    }
+
     virtual void setPlaneAlpha(uint8_t alpha) {
-        if (alpha < 0xFF) {
+        bool forceSkip = false;
+        // PREMULT on the statusbar layer will artifact miserably on VERSION_03
+        // due to the translucency, so skip compositing
+        if (getLayer()->blending == HWC_BLENDING_PREMULT && isStatusBar(getLayer())) {
+            forceSkip = true;
+        }
+        if (alpha < 0xFF || forceSkip) {
             getLayer()->flags |= HWC_SKIP_LAYER;
         }
     }
@@ -1049,6 +1108,9 @@ public:
             getLayer()->flags &= ~HWC_SKIP_LAYER;
         }
     }
+    virtual void setAnimating(bool animating) {
+        // Not bothering for legacy path
+    }
     virtual void setBlending(uint32_t blending) {
         getLayer()->blending = blending;
     }
@@ -1059,7 +1121,18 @@ public:
         reinterpret_cast<Rect&>(getLayer()->displayFrame) = frame;
     }
     virtual void setCrop(const FloatRect& crop) {
-        reinterpret_cast<FloatRect&>(getLayer()->sourceCrop) = crop;
+        /*
+         * Since h/w composer didn't support a flot crop rect before version 1.3,
+         * using integer coordinates instead produces a different output from the GL code in
+         * Layer::drawWithOpenGL(). The difference can be large if the buffer crop to
+         * window size ratio is large and a window crop is defined
+         * (i.e.: if we scale the buffer a lot and we also crop it with a window crop).
+         */
+        hwc_rect_t& r = getLayer()->sourceCrop;
+        r.left  = int(ceilf(crop.left));
+        r.top   = int(ceilf(crop.top));
+        r.right = int(floorf(crop.right));
+        r.bottom= int(floorf(crop.bottom));
     }
     virtual void setVisibleRegionScreen(const Region& reg) {
         // Region::getSharedBuffer creates a reference to the underlying
@@ -1069,6 +1142,11 @@ public:
         SharedBuffer const* sb = reg.getSharedBuffer(&visibleRegion.numRects);
         visibleRegion.rects = reinterpret_cast<hwc_rect_t const *>(sb->data());
     }
+#ifdef QCOM_BSP
+    virtual void setDirtyRect(const Rect& dirtyRect) {
+        // Unimplemented
+    }
+#endif
     virtual void setBuffer(const sp<GraphicBuffer>& buffer) {
         if (buffer == 0 || buffer->handle == 0) {
             getLayer()->compositionType = HWC_FRAMEBUFFER;
@@ -1149,6 +1227,13 @@ public:
             getLayer()->flags &= ~HWC_SKIP_LAYER;
         }
     }
+    virtual void setAnimating(bool animating) {
+        if (animating) {
+            getLayer()->flags |= HWC_SCREENSHOT_ANIMATOR_LAYER;
+        } else {
+            getLayer()->flags &= ~HWC_SCREENSHOT_ANIMATOR_LAYER;
+        }
+    }
     virtual void setBlending(uint32_t blending) {
         getLayer()->blending = blending;
     }
@@ -1184,6 +1269,22 @@ public:
         SharedBuffer const* sb = reg.getSharedBuffer(&visibleRegion.numRects);
         visibleRegion.rects = reinterpret_cast<hwc_rect_t const *>(sb->data());
     }
+#ifdef QCOM_BSP
+    virtual void setDirtyRect(const Rect& dirtyRect) {
+        Rect srcCrop;
+        srcCrop.left = int(ceilf(getLayer()->sourceCropf.left));
+        srcCrop.right = int(ceilf(getLayer()->sourceCropf.right));
+        srcCrop.top = int(ceilf(getLayer()->sourceCropf.top));
+        srcCrop.bottom = int(ceilf(getLayer()->sourceCropf.bottom));
+
+        /* DirtyRect is generated for the full buffer resolution. Crop the value
+         * for the hwc_layer_1_t::sourceCrop resolution before sending to HWC.
+         */
+        Rect finalDR;
+        srcCrop.intersect(dirtyRect, &finalDR);
+        getLayer()->dirtyRect = reinterpret_cast<hwc_rect_t const&>(finalDR);
+    }
+#endif
     virtual void setBuffer(const sp<GraphicBuffer>& buffer) {
         if (buffer == 0 || buffer->handle == 0) {
             getLayer()->compositionType = HWC_FRAMEBUFFER;
@@ -1306,6 +1407,7 @@ void HWComposer::dump(String8& result) const {
                             "HWC",
                             "BACKGROUND",
                             "FB TARGET",
+                            "FB_BLIT",
                             "UNKNOWN"};
                     if (type >= NELEM(compositionTypeName))
                         type = NELEM(compositionTypeName) - 1;

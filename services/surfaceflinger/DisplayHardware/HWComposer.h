@@ -120,6 +120,9 @@ public:
     // the release fence is only valid after commit()
     sp<Fence> getAndResetReleaseFence(int32_t id);
 
+    // is VDS solution enabled
+    inline bool isVDSEnabled() const { return mVDSEnabled; };
+
     // needed forward declarations
     class LayerListIterator;
 
@@ -159,11 +162,15 @@ public:
         virtual sp<Fence> getAndResetReleaseFence() = 0;
         virtual void setDefaultState() = 0;
         virtual void setSkip(bool skip) = 0;
+        virtual void setAnimating(bool animating) = 0;
         virtual void setBlending(uint32_t blending) = 0;
         virtual void setTransform(uint32_t transform) = 0;
         virtual void setFrame(const Rect& frame) = 0;
         virtual void setCrop(const FloatRect& crop) = 0;
         virtual void setVisibleRegionScreen(const Region& reg) = 0;
+#ifdef QCOM_BSP
+        virtual void setDirtyRect(const Rect& dirtyRect) = 0;
+#endif
         virtual void setBuffer(const sp<GraphicBuffer>& buffer) = 0;
         virtual void setAcquireFenceFd(int fenceFd) = 0;
         virtual void setPlaneAlpha(uint8_t alpha) = 0;
@@ -240,7 +247,8 @@ public:
     // Events handling ---------------------------------------------------------
 
     enum {
-        EVENT_VSYNC = HWC_EVENT_VSYNC
+        EVENT_VSYNC = HWC_EVENT_VSYNC,
+        EVENT_ORIENTATION = HWC_EVENT_ORIENTATION
     };
 
     void eventControl(int disp, int event, int enabled);
@@ -346,6 +354,7 @@ private:
     sp<VSyncThread>                 mVSyncThread;
     bool                            mDebugForceFakeVSync;
     BitSet32                        mAllocatedDisplayIDs;
+    bool                            mVDSEnabled;
 
     // protected by mLock
     mutable Mutex mLock;
