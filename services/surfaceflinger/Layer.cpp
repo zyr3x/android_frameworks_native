@@ -1425,6 +1425,12 @@ Layer::LayerCleaner::~LayerCleaner() {
     mFlinger->onLayerDestroyed(mLayer);
 }
 
+#ifdef QCOM_BSP
+bool Layer::hasNewFrame() const {
+   return (mQueuedFrames > 0);
+}
+#endif
+
 // ---------------------------------------------------------------------------
 }; // namespace android
 
