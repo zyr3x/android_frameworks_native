@@ -29,6 +29,8 @@
 
 #include <gui/Surface.h>
 
+#include <ui/FramebufferNativeWindow.h>
+
 #include <hardware/gralloc.h>
 
 #include "DisplayHardware/DisplaySurface.h"
@@ -77,7 +79,7 @@ DisplayDevice::DisplayDevice(
       mActiveConfig(0)
 {
     mNativeWindow = new Surface(producer, false);
-    ANativeWindow* const window = mNativeWindow.get();
+    ANativeWindow* const window = new FramebufferNativeWindow();
 
     /*
      * Create our display's surface

@@ -739,24 +739,26 @@ sp<Fence> HWComposer::getAndResetReleaseFence(int32_t id) {
 status_t HWComposer::commit() {
     int err = NO_ERROR;
     if (mHwc) {
-        if (!hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
-            // On version 1.0, the OpenGL ES target surface is communicated
-            // by the (dpy, sur) fields and we are guaranteed to have only
-            // a single display.
-            mLists[0]->dpy = eglGetCurrentDisplay();
-            mLists[0]->sur = eglGetCurrentSurface(EGL_DRAW);
-        }
-
-        for (size_t i=VIRTUAL_DISPLAY_ID_BASE; i<mNumDisplays; i++) {
-            DisplayData& disp(mDisplayData[i]);
-            if (disp.outbufHandle) {
-                mLists[i]->outbuf = disp.outbufHandle;
-                mLists[i]->outbufAcquireFenceFd =
-                        disp.outbufAcquireFence->dup();
+        if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_0)) {
+            if (!hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_1)) {
+                // On version 1.0, the OpenGL ES target surface is communicated
+                // by the (dpy, sur) fields and we are guaranteed to have only
+                // a single display.
+                mLists[0]->dpy = eglGetCurrentDisplay();
+                mLists[0]->sur = eglGetCurrentSurface(EGL_DRAW);
             }
+            for (size_t i=VIRTUAL_DISPLAY_ID_BASE; i<mNumDisplays; i++) {
+                DisplayData& disp(mDisplayData[i]);
+                if (disp.outbufHandle) {
+                    mLists[i]->outbuf = disp.outbufHandle;
+                    mLists[i]->outbufAcquireFenceFd =
+                        disp.outbufAcquireFence->dup();
+                }
+            }
+            err = mHwc->set(mHwc, mNumDisplays, mLists);
+        } else {
+            err = mHwc->set(mHwc, mNumDisplays,                    const_cast<hwc_display_contents_1_t**>(mLists));
         }
-
-        err = mHwc->set(mHwc, mNumDisplays, mLists);
 
         for (size_t i=0 ; i<mNumDisplays ; i++) {
             DisplayData& disp(mDisplayData[i]);
@@ -909,14 +911,109 @@ protected:
     virtual ~Iterable() { }
 private:
     // returns a copy of ourselves
-    virtual HWComposer::HWCLayer* dup() {
+   /* virtual HWComposer::HWCLayer* dup() {
         return new CONCRETE( static_cast<const CONCRETE&>(*this) );
-    }
+    }*/
     virtual status_t setLayer(size_t index) {
         mCurrentLayer = &mLayerList[index];
         return NO_ERROR;
     }
 };
+
+// #if !HWC_REMOVE_DEPRECATED_VERSIONS
+/*
+ * Concrete implementation of HWCLayer for HWC_DEVICE_API_VERSION_0_3
+ * This implements the HWCLayer side of HWCIterableLayer.
+ */
+class HWCLayerVersion0 : public Iterable<HWCLayerVersion0, hwc_layer_t> {
+public:
+    HWCLayerVersion0(hwc_layer_t* layer)
+        : Iterable<HWCLayerVersion0, hwc_layer_t>(layer) { }
+
+    virtual int32_t getCompositionType() const {
+        return getLayer()->compositionType;
+    }
+    virtual uint32_t getHints() const {
+        return getLayer()->hints;
+    }
+    virtual int getAndResetReleaseFenceFd() {
+        // not supported on VERSION_03
+        return -1;
+    }
+    virtual sp<Fence> getAndResetReleaseFence() {
+        // not supported on VERSION_03
+        return Fence::NO_FENCE;
+    }
+    virtual void setPlaneAlpha(uint8_t alpha) {
+        if (alpha < 0xFF) {
+            getLayer()->flags |= HWC_SKIP_LAYER;
+        }
+    }
+    virtual void setAcquireFenceFd(int fenceFd) {
+        if (fenceFd != -1) {
+            ALOGE("HWC 0.x can't handle acquire fences");
+            close(fenceFd);
+        }
+    }
+    virtual void setDefaultState() {
+        getLayer()->compositionType = HWC_FRAMEBUFFER;
+        getLayer()->hints = 0;
+        getLayer()->flags = HWC_SKIP_LAYER;
+        getLayer()->handle = 0;
+        getLayer()->transform = 0;
+        getLayer()->blending = HWC_BLENDING_NONE;
+        getLayer()->visibleRegionScreen.numRects = 0;
+        getLayer()->visibleRegionScreen.rects = NULL;
+    }
+    virtual void setSkip(bool skip) {
+        if (skip) {
+            getLayer()->flags |= HWC_SKIP_LAYER;
+        } else {
+            getLayer()->flags &= ~HWC_SKIP_LAYER;
+        }
+    }
+    virtual void setBlending(uint32_t blending) {
+        getLayer()->blending = blending;
+    }
+    virtual void setTransform(uint32_t transform) {
+        getLayer()->transform = transform;
+    }
+    virtual void setFrame(const Rect& frame) {
+        reinterpret_cast<Rect&>(getLayer()->displayFrame) = frame;
+    }
+    virtual void setCrop(const FloatRect& crop) {
+        reinterpret_cast<FloatRect&>(getLayer()->sourceCrop) = crop;
+    }
+    virtual void setVisibleRegionScreen(const Region& reg) {
+        // Region::getSharedBuffer creates a reference to the underlying
+        // SharedBuffer of this Region, this reference is freed
+        // in onDisplayed()
+        hwc_region_t& visibleRegion = getLayer()->visibleRegionScreen;
+        SharedBuffer const* sb = reg.getSharedBuffer(&visibleRegion.numRects);
+        visibleRegion.rects = reinterpret_cast<hwc_rect_t const *>(sb->data());
+    }
+    virtual void setBuffer(const sp<GraphicBuffer>& buffer) {
+        if (buffer == 0 || buffer->handle == 0) {
+            getLayer()->compositionType = HWC_FRAMEBUFFER;
+            getLayer()->flags |= HWC_SKIP_LAYER;
+            getLayer()->handle = 0;
+        } else {
+            getLayer()->handle = buffer->handle;
+        }
+    }
+    virtual void onDisplayed() {
+        hwc_region_t& visibleRegion = getLayer()->visibleRegionScreen;
+        SharedBuffer const* sb = SharedBuffer::bufferFromData(visibleRegion.rects);
+        if (sb) {
+            sb->release();
+            // not technically needed but safer
+            visibleRegion.numRects = 0;
+            visibleRegion.rects = NULL;
+        }
+
+    }
+};
+// #endif // !HWC_REMOVE_DEPRECATED_VERSIONS
 
 /*
  * Concrete implementation of HWCLayer for HWC_DEVICE_API_VERSION_1_0.

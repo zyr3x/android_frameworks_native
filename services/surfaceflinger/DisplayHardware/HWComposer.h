@@ -39,6 +39,7 @@ extern "C" int clock_nanosleep(clockid_t clock_id, int flags,
 struct hwc_composer_device_1;
 struct hwc_display_contents_1;
 struct hwc_layer_1;
+
 struct hwc_procs;
 struct framebuffer_device_t;
 
@@ -183,9 +184,9 @@ public:
         friend class LayerListIterator;
         // select the layer at the given index
         virtual status_t setLayer(size_t index) = 0;
-        virtual HWCLayer* dup() = 0;
+        //virtual HWCLayer* dup() = 0;
         static HWCLayer* copy(HWCLayer *rhs) {
-            return rhs ? rhs->dup() : NULL;
+            return  NULL;
         }
     protected:
         virtual ~HWCLayer() { }
