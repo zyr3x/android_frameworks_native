@@ -757,7 +757,8 @@ status_t HWComposer::commit() {
             }
             err = mHwc->set(mHwc, mNumDisplays, mLists);
         } else {
-            err = mHwc->set(mHwc, mNumDisplays,                    const_cast<hwc_display_contents_1_t**>(mLists));
+            err = hwcSet(mHwc, eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW), mNumDisplays,
+                    const_cast<hwc_display_contents_1_t**>(mLists));
         }
 
         for (size_t i=0 ; i<mNumDisplays ; i++) {
@@ -1301,7 +1302,11 @@ void HWComposer::dump(String8& result) const {
     if (mHwc && mHwc->dump) {
         const size_t SIZE = 4096;
         char buffer[SIZE];
+<<<<<<< HEAD
         mHwc->dump(mHwc, buffer, SIZE);
+=======
+        hwcDump(mHwc, buffer, SIZE);
+>>>>>>> 279a75a... surfaceflinger: Update support for hwc < 1.0
         result.append(buffer);
     }
 }
