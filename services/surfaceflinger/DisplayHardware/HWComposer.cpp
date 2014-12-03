@@ -736,6 +736,21 @@ sp<Fence> HWComposer::getAndResetReleaseFence(int32_t id) {
     return fd >= 0 ? new Fence(fd) : Fence::NO_FENCE;
 }
 
+static int hwcSet(hwc_composer_device_1_t* hwc, EGLDisplay dpy, EGLSurface sur,
+        size_t numDisplays, hwc_display_contents_1_t** displays) {
+    int err;
+    if (hwcHasApiVersion(hwc, HWC_DEVICE_API_VERSION_1_0)) {
+        displays[0]->dpy = dpy;
+        displays[0]->sur = sur;
+        err = hwc->set(hwc, numDisplays, displays);
+    } else {
+        hwc_composer_device_t* hwc0 = reinterpret_cast<hwc_composer_device_t*>(hwc);
+        hwc_layer_list_t* list0 = reinterpret_cast<hwc_layer_list_t*>(displays[0]);
+        err = hwc0->set(hwc0, dpy, sur, list0);
+    }
+    return err;
+}
+
 status_t HWComposer::commit() {
     int err = NO_ERROR;
     if (mHwc) {
@@ -1302,11 +1317,7 @@ void HWComposer::dump(String8& result) const {
     if (mHwc && mHwc->dump) {
         const size_t SIZE = 4096;
         char buffer[SIZE];
-<<<<<<< HEAD
         mHwc->dump(mHwc, buffer, SIZE);
-=======
-        hwcDump(mHwc, buffer, SIZE);
->>>>>>> 279a75a... surfaceflinger: Update support for hwc < 1.0
         result.append(buffer);
     }
 }
