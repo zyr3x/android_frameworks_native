@@ -77,7 +77,9 @@ SubRegionMemory::SubRegionMemory(const sp<MemoryHeapPmem>& heap,
         const size_t pagesize = getpagesize();
         size = (size + pagesize-1) & ~(pagesize-1);
         int our_fd = heap->heapID();
-         struct pmem_region sub = { static_cast<unsigned int>(offset), size };
+        struct pmem_region sub;
+        sub.offset = offset;
+        sub.len = size;
         int err = ioctl(our_fd, PMEM_MAP, &sub);
         ALOGE_IF(err<0, "PMEM_MAP failed (%s), "
                 "mFD=%d, sub.offset=%lu, sub.size=%lu",
