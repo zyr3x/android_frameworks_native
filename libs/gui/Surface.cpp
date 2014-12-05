@@ -36,6 +36,10 @@
 
 #include <private/gui/ComposerService.h>
 
+#ifdef QCOM_BSP
+#include <gralloc_priv.h>
+#endif
+
 namespace android {
 
 Surface::Surface(
@@ -63,9 +67,14 @@ Surface::Surface(
     mReqHeight = 0;
     mReqFormat = 0;
     mReqUsage = 0;
+#ifdef QCOM_BSP
+    mReqSize = 0;
+#endif
     mTimestamp = NATIVE_WINDOW_TIMESTAMP_AUTO;
     mCrop.clear();
+#ifdef QCOM_BSP
     mDirtyRect.clear();
+#endif
     mScalingMode = NATIVE_WINDOW_SCALING_MODE_FREEZE;
     mTransform = 0;
     mStickyTransform = 0;
@@ -127,9 +136,12 @@ int Surface::hook_queueBuffer(ANativeWindow* window,
 int Surface::hook_dequeueBuffer_DEPRECATED(ANativeWindow* window,
         ANativeWindowBuffer** buffer) {
     Surface* c = getSelf(window);
-    ANativeWindowBuffer* buf;
+    ANativeWindowBuffer* buf = NULL;
     int fenceFd = -1;
     int result = c->dequeueBuffer(&buf, &fenceFd);
+
+    if (result != NO_ERROR) return result;
+
     sp<Fence> fence(new Fence(fenceFd));
     int waitResult = fence->waitForever("dequeueBuffer_DEPRECATED");
     if (waitResult != OK) {
@@ -173,11 +185,13 @@ int Surface::hook_perform(ANativeWindow* window, int operation, ...) {
     return c->perform(operation, args);
 }
 
+#ifdef QCOM_BSP
 status_t Surface::setDirtyRect(const Rect* dirtyRect) {
     Mutex::Autolock lock(mMutex);
     mDirtyRect = *dirtyRect;
     return NO_ERROR;
 }
+#endif
 
 int Surface::setSwapInterval(int interval) {
     ATRACE_CALL();
@@ -322,13 +336,22 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     Rect crop;
     mCrop.intersect(Rect(buffer->width, buffer->height), &crop);
 
-    Rect dirtyRect = mDirtyRect.isEmpty() ?
-        Rect(buffer->width, buffer->height) : mDirtyRect;
+#ifdef QCOM_BSP
+    Rect dirtyRect = mDirtyRect;
+    if(dirtyRect.isEmpty()) {
+        int drWidth = mUserWidth ? mUserWidth : mDefaultWidth;
+        int drHeight = mUserHeight ? mUserHeight : mDefaultHeight;
+        dirtyRect = Rect(drWidth, drHeight);
+    }
+#endif
 
     sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
     IGraphicBufferProducer::QueueBufferOutput output;
-    IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
-            crop, dirtyRect, mScalingMode, mTransform ^ mStickyTransform, mSwapIntervalZero,
+    IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp, crop,
+#ifdef QCOM_BSP
+            dirtyRect,
+#endif
+            mScalingMode, mTransform ^ mStickyTransform, mSwapIntervalZero,
             fence, mStickyTransform);
     status_t err = mGraphicBufferProducer->queueBuffer(i, input, &output);
     if (err != OK)  {
@@ -345,7 +368,9 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     }
 
     mConsumerRunningBehind = (numPendingBuffers >= 2);
+#ifdef QCOM_BSP
     mDirtyRect.clear();
+#endif
     return err;
 }
 
@@ -395,6 +420,16 @@ int Surface::query(int what, int* value) const {
                 }
                 return err;
             }
+            case NATIVE_WINDOW_CONSUMER_USAGE_BITS: {
+                status_t err = NO_ERROR;
+                err = mGraphicBufferProducer->query(what, value);
+                if(err == NO_ERROR) {
+                    *value |= mReqUsage;
+                    return NO_ERROR;
+                } else {
+                    return err;
+                }
+            }
         }
     }
     return mGraphicBufferProducer->query(what, value);
@@ -440,6 +475,11 @@ int Surface::perform(int operation, va_list args)
     case NATIVE_WINDOW_SET_BUFFERS_FORMAT:
         res = dispatchSetBuffersFormat(args);
         break;
+#ifdef QCOM_BSP
+    case NATIVE_WINDOW_SET_BUFFERS_SIZE:
+        res = dispatchSetBuffersSize(args);
+        break;
+#endif
     case NATIVE_WINDOW_LOCK:
         res = dispatchLock(args);
         break;
@@ -518,6 +558,13 @@ int Surface::dispatchSetBuffersFormat(va_list args) {
     return setBuffersFormat(f);
 }
 
+#ifdef QCOM_BSP
+int Surface::dispatchSetBuffersSize(va_list args) {
+    int size = va_arg(args, int);
+    return setBuffersSize(size);
+}
+#endif
+
 int Surface::dispatchSetScalingMode(va_list args) {
     int m = va_arg(args, int);
     return setScalingMode(m);
@@ -593,6 +640,9 @@ int Surface::disconnect(int api) {
         mReqWidth = 0;
         mReqHeight = 0;
         mReqUsage = 0;
+#ifdef QCOM_BSP
+        mReqSize = 0;
+#endif
         mCrop.clear();
         mScalingMode = NATIVE_WINDOW_SCALING_MODE_FREEZE;
         mTransform = 0;
@@ -694,6 +744,24 @@ int Surface::setBuffersFormat(int format)
     mReqFormat = format;
     return NO_ERROR;
 }
+
+#ifdef QCOM_BSP
+int Surface::setBuffersSize(int size)
+{
+    ATRACE_CALL();
+    ALOGV("Surface::setBuffersSize");
+
+    if (size<0)
+        return BAD_VALUE;
+
+    Mutex::Autolock lock(mMutex);
+    if(mReqSize != (uint32_t)size) {
+        mReqSize = size;
+        mGraphicBufferProducer->setBuffersSize(size);
+    }
+    return NO_ERROR;
+}
+#endif
 
 int Surface::setScalingMode(int mode)
 {
@@ -817,7 +885,16 @@ status_t Surface::lock(
             return err;
         }
         // we're intending to do software rendering from this point
+        // Do not overwrite the mReqUsage flag which was set by the client
+#ifdef QCOM_BSP
+        setUsage(mReqUsage & GRALLOC_USAGE_PRIVATE_EXTERNAL_ONLY |
+                mReqUsage & GRALLOC_USAGE_PRIVATE_INTERNAL_ONLY |
+                mReqUsage & GRALLOC_USAGE_PRIVATE_SECURE_DISPLAY |
+                    GRALLOC_USAGE_SW_READ_OFTEN |
+                    GRALLOC_USAGE_SW_WRITE_OFTEN);
+#else
         setUsage(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
+#endif
     }
 
     ANativeWindowBuffer* out;
@@ -867,7 +944,9 @@ status_t Surface::lock(
 
         { // scope for the lock
             Mutex::Autolock lock(mMutex);
-            mSlots[backBufferSlot].dirtyRegion = newDirtyRegion;
+            if (backBufferSlot >= 0) {
+               mSlots[backBufferSlot].dirtyRegion = newDirtyRegion;
+            }
         }
 
         if (inOutDirtyBounds) {

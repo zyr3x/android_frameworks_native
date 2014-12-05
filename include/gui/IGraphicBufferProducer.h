@@ -282,12 +282,14 @@ public:
           scalingMode(scalingMode), transform(transform), stickyTransform(sticky),
           async(async), fence(fence) { }
 
+#ifdef QCOM_BSP
         inline QueueBufferInput(int64_t timestamp, bool isAutoTimestamp,
                 const Rect& crop, const Rect& dirtyRect, int scalingMode, uint32_t transform, bool async,
                 const sp<Fence>& fence, uint32_t sticky = 0)
         : timestamp(timestamp), isAutoTimestamp(isAutoTimestamp), crop(crop),
           dirtyRect(dirtyRect),scalingMode(scalingMode), transform(transform), stickyTransform(sticky),
           async(async), fence(fence) { }
+#endif
 
         inline void deflate(int64_t* outTimestamp, bool* outIsAutoTimestamp,
                 Rect* outCrop, int* outScalingMode, uint32_t* outTransform,
@@ -305,6 +307,7 @@ public:
             }
         }
 
+#ifdef QCOM_BSP
         inline void deflate(int64_t* outTimestamp, bool* outIsAutoTimestamp,
                 Rect* outCrop, Rect* outDirtyRect, int* outScalingMode, uint32_t* outTransform,
                 bool* outAsync, sp<Fence>* outFence,
@@ -321,7 +324,7 @@ public:
                 *outStickyTransform = stickyTransform;
             }
         }
-
+#endif
 
         // Flattenable protocol
         size_t getFlattenedSize() const;
@@ -333,7 +336,9 @@ public:
         int64_t timestamp;
         int isAutoTimestamp;
         Rect crop;
+#ifdef QCOM_BSP
         Rect dirtyRect;
+#endif
         int scalingMode;
         uint32_t transform;
         uint32_t stickyTransform;
@@ -476,6 +481,17 @@ public:
     // allocated, this function has no effect.
     virtual void allocateBuffers(bool async, uint32_t width, uint32_t height,
             uint32_t format, uint32_t usage) = 0;
+
+#ifdef QCOM_BSP
+    // setBufferSize enables to specify the user defined size of the buffer
+    // that needs to be allocated by surfaceflinger for its client. This is
+    // useful for cases where the client doesn't want the gralloc to calculate
+    // buffer size. client should reset this value to 0, if it wants gralloc to
+    // calculate the size for the buffer. this will take effect from next
+    // dequeue buffer.
+    virtual status_t setBuffersSize(int size) = 0;
+#endif
+
 };
 
 // ----------------------------------------------------------------------------
