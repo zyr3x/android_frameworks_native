@@ -1381,10 +1381,7 @@ void SurfaceFlinger::configureVirtualDisplay(int32_t &hwcDisplayId,
         } else {
             int sinkUsage = -1;
             state.surface->query(NATIVE_WINDOW_CONSUMER_USAGE_BITS, &sinkUsage);
-#ifdef QCOM_BSP
-            if(sinkUsage & GRALLOC_USAGE_PRIVATE_WFD)
-#endif
-                hwcDisplayId = allocateHwcDisplayId(state.type);
+            hwcDisplayId = allocateHwcDisplayId(state.type);
 
             if (hwcDisplayId >= 0) {
                 // This is for WFD virtual display scenario.
@@ -1541,13 +1538,13 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                             }
                             // Set the view frame of each display only of its
                             // default orientation.
-                            if(orient == DisplayState::eOrientationDefault and
+/*                            if(orient == DisplayState::eOrientationDefault and
                                     state.frame.isValid()) {
                                 qdutils::setViewFrame(disp->getHwcDisplayId(),
                                     state.frame.left, state.frame.top,
                                     state.frame.right, state.frame.bottom);
                             }
-#else
+*/
                             disp->setProjection(state.orientation,
                                 state.viewport, state.frame);
 #endif

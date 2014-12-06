@@ -78,11 +78,7 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc,
     // set by the consumer. Otherwise allow gralloc to decide the format based
     // on usage bits.
     mDefaultOutputFormat = sinkFormat;
-    if((sinkUsage & GRALLOC_USAGE_HW_VIDEO_ENCODER)
-#if QCOM_BSP
-            && (sinkUsage & GRALLOC_USAGE_PRIVATE_WFD)
-#endif
-      )
+    if((sinkUsage & GRALLOC_USAGE_HW_VIDEO_ENCODER))
     {
         mDefaultOutputFormat = HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED;
         mForceHwcCopy = true;
